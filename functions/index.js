@@ -1,5 +1,5 @@
 export async function onRequest(context) {
-  const { request } = context;
+  const { request, env } = context;
   const url = new URL(request.url);
   const hostname = url.hostname;
 
@@ -10,6 +10,21 @@ export async function onRequest(context) {
     return Response.redirect(redirectUrl, 301);
   }
   // --- www yönlendirme son ---
+
+  // ===== CACHE KONTROL - HTML CACHE =====
+  const cache = caches.default;
+  const cacheKey = new Request(request.url, {
+    method: 'GET',
+    headers: request.headers
+  });
+  
+  let cachedResponse = await cache.match(cacheKey);
+  
+  // Cache varsa direkt döndür
+  if (cachedResponse) {
+    return cachedResponse;
+  }
+  // ===== CACHE KONTROL SON =====
 
   // Sayı artışı işlemi düzgün tanımlandı
   const nextDomain = hostname.replace(/(\d+)(?!.*\d)/, (match) => {
@@ -53,12 +68,15 @@ export async function onRequest(context) {
 
   // Menü verileri
   let menuler = [];
-  let menuicon = "";
-  let menuurl = "";
-  let menuad = "";
 
   try {
-    const response = await fetch(apiUrl);
+    // API'yi Cloudflare cache ile çağır
+    const response = await fetch(apiUrl, {
+      cf: {
+        cacheTtl: 300, // 5 dakika cache
+        cacheEverything: true
+      }
+    });
     const json = await response.json();
 
     // Ayar verileri
@@ -111,20 +129,16 @@ export async function onRequest(context) {
           url: item.menu_url || "",
           icon: item.menu_awesome || ""
         }));
-
-      if (menuler.length > 0) {
-        menuad = menuler[0].ad;
-        menuurl = menuler[0].url;
-        menuicon = menuler[0].icon;
-      }
     }
 
   } catch (e) {
     console.error("API'den veri alınamadı:", e);
   }
 
-  // Burada istediğin şekilde html vs oluşturabilirsin
-  // Örnek:
+  // Pageskin URL'sini preload için hazırla
+  const pageskinOrigin = reklam3 ? new URL(reklam3).origin : '';
+
+  // HTML oluştur
   const html = `
 <!DOCTYPE html>
 <html lang="tr">
@@ -136,6 +150,9 @@ export async function onRequest(context) {
 <meta http-equiv="X-UA-Compatible" content="ie=edge" />
 <link rel="dns-prefetch" href="https://fonts.googleapis.com/" />
 <link rel="dns-prefetch" href="https://cdnjs.cloudflare.com/" />
+${pageskinOrigin ? `<link rel="dns-prefetch" href="${pageskinOrigin}" />` : ''}
+${pageskinOrigin ? `<link rel="preconnect" href="${pageskinOrigin}" crossorigin />` : ''}
+${reklam3 ? `<link rel="preload" as="image" href="${reklam3}" />` : ''}
 <title>${title}</title>
 <meta name="description" content="${description}" />
 <meta property="og:title" content="${title}" />
@@ -153,53 +170,27 @@ export async function onRequest(context) {
     align-items: flex-start;
     transition: all 200ms var(--transition);
 }
- *::-webkit-scrollbar {
+*::-webkit-scrollbar {
     width: 2px;
 }
-</style>
-<!-- STYLE LİNK -->
-<script>
 
-var searchUsers = document.querySelector('#search'),
-    users = document.querySelectorAll('.single-match show'),
-    usersData = document.querySelectorAll('.single-match show'),
-    searchVal;
-
-searchUsers.addEventListener('keydown', function() {
-  searchVal = this.value.toLowerCase();
-
-  for (var i = 0; i < users.length; i++) {
-    if (!searchVal || usersData[i].textContent.toLowerCase().indexOf(searchVal) > -1) {
-      users[i].style['display'] = 'flex';
-    }
-    else {
-      users[i].style['display'] = 'none';
-    }
-  }
-});
-
-</script>
-<link rel="stylesheet" href="//cdnjs.cloudflare.com/ajax/libs/font-awesome/5.12.1/css/all.min.css" />
-<link rel="stylesheet" href="assets/css/jquery.fancybox.min.css" />
-<link rel="stylesheet" href="assets/css/videoplayerb94db94d.css?v=130920202" />
-<link rel="stylesheet" href="assets/css/playerstyleb94db94d.css?v=130920202" />
-<link rel="stylesheet" href="assets/css/glide.coreb94db94d.css?v=130920202" />
-<link rel="stylesheet" href="assets/css/glide.themeb94db94d.css?v=130920202" />
-<link rel="stylesheet" href="assets/css/Styleb94d7839.css?v=1241242" />
-<link rel="stylesheet" href="assets/css/radarb94db94d.css?v=130920202" />
-<link rel="stylesheet" href="assets/css/Responsive1b94d7944.css?v=124" />
-<link href="https://fonts.googleapis.com/css?family=Rubik:300,400,700&amp;display=swap" rel="stylesheet" />
- <style>
-
-        .sayfa-arka {
+/* PageSkin Lazy Load Optimizasyonu */
+.sayfa-arka {
     position: fixed;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
     z-index: -2;
+    background: ${pageskincolor};
+    transition: opacity 0.3s ease-in-out;
+    opacity: 0;
+}
+
+.sayfa-arka.loaded {
     background: url(${reklam3}) ${pageskincolor} no-repeat center top fixed;
     background-size: cover;
+    opacity: 1;
 }
 
 @media screen and (max-width:900px){
@@ -207,7 +198,7 @@ searchUsers.addEventListener('keydown', function() {
 display: block;
 }
 }
-   @media screen and (max-width: 600px) {
+@media screen and (max-width: 600px) {
   .nomobile {
     visibility: hidden;
     clear: both;
@@ -218,10 +209,55 @@ display: block;
     display: none; 
   }
 }
+</style>
+<!-- STYLE LİNK -->
+<link rel="stylesheet" href="//cdnjs.cloudflare.com/ajax/libs/font-awesome/5.12.1/css/all.min.css" />
+<link rel="stylesheet" href="assets/css/jquery.fancybox.min.css" />
+<link rel="stylesheet" href="assets/css/videoplayerb94db94d.css?v=130920202" />
+<link rel="stylesheet" href="assets/css/playerstyleb94db94d.css?v=130920202" />
+<link rel="stylesheet" href="assets/css/glide.coreb94db94d.css?v=130920202" />
+<link rel="stylesheet" href="assets/css/glide.themeb94db94d.css?v=130920202" />
+<link rel="stylesheet" href="assets/css/Styleb94d7839.css?v=1241242" />
+<link rel="stylesheet" href="assets/css/radarb94db94d.css?v=130920202" />
+<link rel="stylesheet" href="assets/css/Responsive1b94d7944.css?v=124" />
+<link href="https://fonts.googleapis.com/css?family=Rubik:300,400,700&amp;display=swap" rel="stylesheet" />
+${headerapi}
+${analyticsapi}
 
-        </style>
-        ${headerapi}
-        ${analyticsapi}
+<!-- PageSkin Lazy Load Script -->
+<script>
+(function() {
+  var pageskinLoaded = false;
+  
+  function loadPageSkin() {
+    if (pageskinLoaded) return;
+    pageskinLoaded = true;
+    
+    var pageskinDiv = document.querySelector('.sayfa-arka');
+    if (!pageskinDiv) return;
+    
+    var img = new Image();
+    img.onload = function() {
+      pageskinDiv.classList.add('loaded');
+    };
+    img.onerror = function() {
+      // Hata durumunda sadece rengi göster
+      pageskinDiv.style.opacity = '1';
+    };
+    img.src = '${reklam3}';
+  }
+  
+  // Sayfa yüklendikten sonra pageskin'i yükle
+  if (document.readyState === 'complete') {
+    setTimeout(loadPageSkin, 100);
+  } else {
+    window.addEventListener('load', function() {
+      setTimeout(loadPageSkin, 100);
+    });
+  }
+})();
+</script>
+
 ${
   hrefpageskin
     ? `<a href="${hrefpageskin}" target="_blank" rel="noopener" aria-label="Reklam"><div class="sayfa-arka nomobile">`
@@ -400,8 +436,8 @@ ${
 ${reklam1 
   ? `<div style="margin: 10px; text-align: center;">
       ${hrefreklam1 
-        ? `<a href="${hrefreklam1}" target="_blank"><img class="ads-img" src="${reklam1}" width="100%"/></a>` 
-        : `<img class="ads-img" src="${reklam1}" width="100%"/>`}
+        ? `<a href="${hrefreklam1}" target="_blank"><img class="ads-img" src="${reklam1}" width="100%" loading="lazy"/></a>` 
+        : `<img class="ads-img" src="${reklam1}" width="100%" loading="lazy"/>`}
     </div>` 
   : ''
 }
@@ -410,8 +446,8 @@ ${
     ? `<div style="margin: 10px; text-align: center;">
          ${
            hrefreklam4 
-             ? `<a href="${hrefreklam4}" target="_blank"><img class="ads-img" src="${reklam4}" width="100%"/></a>` 
-             : `<img class="ads-img" src="${reklam4}" width="100%"/>`
+             ? `<a href="${hrefreklam4}" target="_blank"><img class="ads-img" src="${reklam4}" width="100%" loading="lazy"/></a>` 
+             : `<img class="ads-img" src="${reklam4}" width="100%" loading="lazy"/>`
          }
        </div>`
     : ''
@@ -424,7 +460,7 @@ ${
     <div class="live-player" data-loadbalancer="1" data-loadbalancerdomain="osflare.work">
       <div class="player-attributes">
         <center>
-          <iframe id="macth-video" name="macth-video" width="100%" height="450" scrolling="no" frameborder="0" src="matches?id=bein-sports-1" allowfullscreen=""></iframe>
+          <iframe id="macth-video" name="macth-video" width="100%" height="450" scrolling="no" frameborder="0" src="matches?id=bein-sports-1" allowfullscreen="" loading="lazy"></iframe>
         </center>
       </div>
     </div>
@@ -459,22 +495,20 @@ ${
     padding: 7px 35px 7px 10px;
     font-size: 16px;
     border-radius: 5px;
-    border: 1px solid rgba(255, 255, 255, 0.3); /* Açık gri renk */
-    outline: none; /* Focus olduğunda oluşan dış çizgiyi kaldırır */
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    outline: none;
 }
 
 .search-container input:focus {
-    border: 1px solid rgba(255, 255, 255, 0.3); /* Focus durumunda da aynı açık gri çizgi */
+    border: 1px solid rgba(255, 255, 255, 0.3);
 }
-
-
 
   .search-container .search-icon {
     position: absolute;
     right: 10px;
     top: 50%;
     transform: translateY(-50%);
-    pointer-events: none; /* input'a tıklamaya engel olmasın */
+    pointer-events: none;
     color: #888;
     font-size: 18px;
   }
@@ -483,11 +517,7 @@ ${
     color:#aaaaaa; 
 }
 
-
 </style>
-
-
-
 
 <div class="search-container">
   <input type="text" id="matchSearchInput" placeholder="Maç veya kanal ara...">
@@ -510,13 +540,12 @@ ${
   position: sticky;
   top: 0;
   z-index: 999;
-  background: #fff; /* varsa */
+  background: #fff;
 }
 </style>
 
              <!-- İçerik Alanı: Menü + Maçlar Yan Yana -->
 <div style="display: flex; align-items: flex-start; gap: 10px;">
-
 
 <script>
 // DOM tamamen yüklendiğinde başlat
@@ -538,7 +567,7 @@ document.addEventListener('DOMContentLoaded', function () {
  <div class="vertical-menu">
 <div class="menu-item" data-matchfilter="Futbol,Futbol TR,Football, FutboI" title="Futbol">
   <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 32 32" fill="#ffffff">
-        <path d="M16 0c-8.836 0-16 7.164-16 16s7.164 16 16 16 16-7.164 16-16c-0.010-8.832-7.168-15.99-16-16zM16.571 4.613l5.562-2.223c0.631 0.286 1.242 0.615 1.828 0.985l0.015 0.009c0.576 0.365 1.126 0.768 1.646 1.207l0.045 0.039c0.234 0.199 0.461 0.405 0.681 0.617 0.028 0.027 0.057 0.053 0.085 0.081 0.232 0.226 0.456 0.459 0.673 0.699 0.018 0.020 0.035 0.042 0.053 0.062 0.19 0.213 0.373 0.434 0.551 0.659 0.043 0.053 0.085 0.107 0.127 0.16 0.193 0.249 0.379 0.503 0.555 0.765l-1.109 4.714-5.455 1.819-5.255-4.205zM4.163 6.911c0.041-0.053 0.084-0.107 0.126-0.16 0.176-0.223 0.357-0.44 0.545-0.652 0.020-0.022 0.039-0.045 0.059-0.068 0.216-0.24 0.439-0.473 0.67-0.699 0.027-0.026 0.053-0.053 0.081-0.077 0.219-0.211 0.444-0.416 0.676-0.614l0.053-0.045c0.516-0.436 1.061-0.837 1.631-1.2l0.021-0.013c0.582-0.37 1.189-0.698 1.817-0.984l5.588 2.213v5.387l-5.255 4.204-5.455-1.815-1.109-4.714c0.178-0.261 0.362-0.515 0.554-0.763zM3.52 24.184c-0.157-0.239-0.307-0.483-0.45-0.731l-0.035-0.060c-0.142-0.247-0.277-0.498-0.404-0.753l-0.004-0.008c-0.267-0.536-0.502-1.089-0.702-1.653v-0.005c-0.095-0.267-0.181-0.54-0.261-0.815l-0.029-0.101c-0.073-0.258-0.14-0.519-0.199-0.783-0.005-0.026-0.012-0.050-0.017-0.076-0.131-0.596-0.225-1.199-0.282-1.806l3.256-3.907 5.418 1.806 1.572 6.289-2.584 3.438zM19.552 30.503c-0.267 0.066-0.54 0.123-0.814 0.174-0.038 0.008-0.077 0.014-0.116 0.021-0.233 0.042-0.469 0.077-0.705 0.107-0.063 0.008-0.126 0.017-0.188 0.024-0.219 0.026-0.441 0.045-0.663 0.061-0.070 0.005-0.139 0.012-0.209 0.016-0.284 0.017-0.57 0.028-0.858 0.028-0.264 0-0.526-0.007-0.787-0.021-0.031 0-0.062-0.005-0.093-0.008-0.232-0.013-0.463-0.031-0.694-0.053l-0.027-0.005c-0.505-0.055-1.007-0.135-1.504-0.24l-3.155-4.939 2.543-3.391h7.431l2.585 3.413zM30.585 19.2c-0.005 0.026-0.012 0.050-0.017 0.076-0.060 0.264-0.126 0.524-0.199 0.783l-0.029 0.101c-0.080 0.275-0.166 0.547-0.261 0.815v0.005c-0.201 0.565-0.435 1.117-0.702 1.653l-0.004 0.008c-0.128 0.255-0.262 0.506-0.404 0.753l-0.035 0.060c-0.142 0.249-0.292 0.492-0.449 0.73l-5.262 0.83-2.602-3.435 1.572-6.287 5.418-1.806 3.256 3.907c-0.056 0.608-0.151 1.211-0.282 1.808z"></path>
+        <path d="M16 0c-8.836 0-16 7.164-16 16s7.164 16 16 16 16-7.164 16-16c-0.010-8.832-7.168-15.99-16-16zM16.571 4.613l5.562-2.223c0.631 0.286 1.242 0.615 1.828 0.985l0.015 0.009c0.576 0.365 1.126 0.768 1.646 1.207l0.045 0.039c0.234 0.199 0.461 0.405 0.681 0.617 0.028 0.027 0.057 0.053 0.085 0.081 0.232 0.226 0.456 0.459 0.673 0.699 0.018 0.020 0.035 0.042 0.053 0.062 0.190 0.213 0.373 0.434 0.551 0.659 0.043 0.053 0.085 0.107 0.127 0.160 0.193 0.249 0.379 0.503 0.555 0.765l-1.109 4.714-5.455 1.819-5.255-4.205zM4.163 6.911c0.041-0.053 0.084-0.107 0.126-0.160 0.176-0.223 0.357-0.44 0.545-0.652 0.020-0.022 0.039-0.045 0.059-0.068 0.216-0.24 0.439-0.473 0.670-0.699 0.027-0.026 0.053-0.053 0.081-0.077 0.219-0.211 0.444-0.416 0.676-0.614l0.053-0.045c0.516-0.436 1.061-0.837 1.631-1.200l0.021-0.013c0.582-0.370 1.189-0.698 1.817-0.984l5.588 2.213v5.387l-5.255 4.204-5.455-1.815-1.109-4.714c0.178-0.261 0.362-0.515 0.554-0.763zM3.52 24.184c-0.157-0.239-0.307-0.483-0.450-0.731l-0.035-0.060c-0.142-0.247-0.277-0.498-0.404-0.753l-0.004-0.008c-0.267-0.536-0.502-1.089-0.702-1.653v-0.005c-0.095-0.267-0.181-0.54-0.261-0.815l-0.029-0.101c-0.073-0.258-0.14-0.519-0.199-0.783-0.005-0.026-0.012-0.050-0.017-0.076-0.131-0.596-0.225-1.199-0.282-1.806l3.256-3.907 5.418 1.806 1.572 6.289-2.584 3.438zM19.552 30.503c-0.267 0.066-0.54 0.123-0.814 0.174-0.038 0.008-0.077 0.014-0.116 0.021-0.233 0.042-0.469 0.077-0.705 0.107-0.063 0.008-0.126 0.017-0.188 0.024-0.219 0.026-0.441 0.045-0.663 0.061-0.070 0.005-0.139 0.012-0.209 0.016-0.284 0.017-0.57 0.028-0.858 0.028-0.264 0-0.526-0.007-0.787-0.021-0.031 0-0.062-0.005-0.093-0.008-0.232-0.013-0.463-0.031-0.694-0.053l-0.027-0.005c-0.505-0.055-1.007-0.135-1.504-0.240l-3.155-4.939 2.543-3.391h7.431l2.585 3.413zM30.585 19.2c-0.005 0.026-0.012 0.050-0.017 0.076-0.060 0.264-0.126 0.524-0.199 0.783l-0.029 0.101c-0.080 0.275-0.166 0.547-0.261 0.815v0.005c-0.201 0.565-0.435 1.117-0.702 1.653l-0.004 0.008c-0.128 0.255-0.262 0.506-0.404 0.753l-0.035 0.060c-0.142 0.249-0.292 0.492-0.449 0.730l-5.262 0.83-2.602-3.435 1.572-6.287 5.418-1.806 3.256 3.907c-0.056 0.608-0.151 1.211-0.282 1.808z"></path>
   </svg>
 </div>
    <div class="menu-item" data-matchfilter="Basketbol,Basketbol TR, BasketboI" title="Basketbol">
@@ -584,26 +613,10 @@ document.addEventListener('DOMContentLoaded', function () {
     </svg></div>
     <div class="menu-item" data-matchfilter="e-Sporlar" title="e-Sporlar">
     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 32 32" fill="#ffffff">
-        <path d="M28.025 6.283c-0.828-1.335-5.020-1.995-5.831-1.699-0.544 0.215-1.003 0.44-1.44 0.698l0.047-0.026c-1.303 0.815-2.887 1.299-4.583 1.299-0.054 0-0.108-0-0.162-0.001l0.008 0c-0.045 0.001-0.099 0.001-0.152 0.001-1.696 0-3.28-0.483-4.62-1.32l0.037 0.021c-0.39-0.232-0.849-0.457-1.325-0.648l-0.068-0.024c-0.815-0.296-5.005 0.363-5.833 1.699-3.381 5.449-5.31 17.909-3.128 20.202 0.396 0.444 0.971 0.723 1.61 0.723 0.075 0 0.15-0.004 0.223-0.011l-0.009 0.001c1.189-0.116 2.464-1.152 3.595-2.927l0.312-0.517c2.008-3.339 2.172-3.612 9.359-3.612s7.351 0.273 9.359 3.612l0.314 0.522c1.127 1.768 2.403 2.806 3.592 2.922 0.063 0.007 0.137 0.010 0.211 0.010 0.64 0 1.215-0.278 1.611-0.72l0.002-0.002c2.183-2.292 0.252-14.752-3.128-20.202zM22.843 7.059h1.509c0.139 0.002 0.25 0.114 0.25 0.253 0 0 0 0.001 0 0.001v-0 1.504c0 0 0 0 0 0 0 0.089-0.046 0.167-0.115 0.212l-0.001 0.001-0.755 0.485c-0.038 0.025-0.085 0.040-0.135 0.040s-0.097-0.015-0.136-0.040l0.001 0.001-0.763-0.485c-0.072-0.045-0.12-0.122-0.123-0.211v-1.504c0.008-0.142 0.124-0.254 0.267-0.255h0zM18.231 9.971c0.093-0.088 0.218-0.142 0.356-0.142s0.263 0.054 0.356 0.142l-0-0c0.092 0.091 0.148 0.217 0.148 0.356 0 0.277-0.225 0.502-0.502 0.502-0.001 0-0.001 0-0.002 0h0c-0.277-0.002-0.501-0.227-0.501-0.504 0-0.138 0.056-0.263 0.146-0.354l-0 0zM13.207 9.971c0.092-0.088 0.217-0.142 0.354-0.142s0.262 0.054 0.355 0.142l-0-0c0.091 0.091 0.148 0.216 0.148 0.355v0c0 0.001 0 0.002 0 0.003 0 0.276-0.224 0.5-0.5 0.5-0.139 0-0.265-0.057-0.356-0.149l-0-0c-0.090-0.091-0.145-0.215-0.145-0.353 0-0.001 0-0.001 0-0.002v0c0-0 0-0.001 0-0.001 0-0.138 0.055-0.263 0.144-0.354l-0 0zM7.809 12.339c-0.002 0-0.005 0-0.008 0-1.111 0-2.012-0.901-2.012-2.012s0.901-2.012 2.012-2.012c1.111 0 2.012 0.901 2.012 2.012 0 0 0 0 0 0v-0c0 0 0 0 0 0 0 1.108-0.897 2.007-2.005 2.010h-0zM15.063 15.859c0 0.003 0 0.008 0 0.012 0 0.133-0.107 0.242-0.24 0.244h-1.515v1.524c0 0.005 0.001 0.011 0.001 0.017 0 0.121-0.098 0.219-0.219 0.219-0.003 0-0.006-0-0.009-0h-1.515c-0.004 0-0.009 0-0.014 0-0.133 0-0.242-0.105-0.248-0.236l-0-0.001v-1.526h-1.491c-0.142-0.001-0.258-0.114-0.262-0.256v-1.512c0.006-0.137 0.118-0.245 0.256-0.245 0.002 0 0.005 0 0.007 0h1.491v-1.512c0.005-0.138 0.119-0.249 0.258-0.249 0.001 0 0.002 0 0.004 0h1.515c0.126 0.001 0.228 0.103 0.228 0.229 0 0.007-0 0.013-0.001 0.020l0-0.001v1.512h1.514c0.001-0 0.002-0 0.004-0 0.13 0 0.236 0.106 0.236 0.236 0 0.003-0 0.006-0 0.009v-0 1.513zM16.064 11.592c-0.001 0-0.003 0-0.005 0-0.699 0-1.266-0.567-1.266-1.266s0.567-1.266 1.266-1.266c0.699 0 1.266 0.567 1.266 1.266v0c0 0 0 0 0 0.001 0 0.697-0.564 1.263-1.261 1.265h-0zM19.805 17.152c-0.002 0-0.005 0-0.008 0-1.111 0-2.012-0.901-2.012-2.012s0.901-2.012 2.012-2.012c1.111 0 2.012 0.901 2.012 2.012v0c0 0 0 0.001 0 0.002 0 1.108-0.896 2.007-2.003 2.010h-0zM22.097 11.336h-1.498c-0.001 0-0.003 0-0.004 0-0.143 0-0.26-0.109-0.273-0.249l-0-0.001v-1.518c0.013-0.139 0.128-0.246 0.269-0.246 0.003 0 0.005 0 0.008 0h1.497c0.001 0 0.002-0 0.003-0 0.087 0 0.163 0.045 0.208 0.112l0.001 0.001 0.483 0.756c0.025 0.038 0.040 0.085 0.040 0.136s-0.015 0.097-0.041 0.136l0.001-0.001-0.483 0.757c-0.045 0.070-0.123 0.115-0.211 0.115-0 0-0 0-0 0h0zM24.352 13.598h-1.509c-0.144-0.004-0.26-0.118-0.267-0.261l-0-0.001v-1.504c0.003-0.089 0.051-0.167 0.122-0.211l0.001-0.001 0.759-0.485c0.038-0.025 0.085-0.039 0.136-0.039s0.097 0.015 0.137 0.040l-0.001-0.001 0.745 0.485c0.064 0.044 0.105 0.117 0.105 0.2 0 0.004-0 0.008-0 0.012l0-0.001v1.504c0.001 0.006 0.001 0.013 0.001 0.020 0 0.129-0.101 0.234-0.228 0.241l-0.001 0zM26.834 11.084c0 0.003 0 0.007 0 0.011 0 0.132-0.107 0.239-0.239 0.24h-1.498c-0 0-0.001 0-0.001 0-0.088 0-0.165-0.045-0.21-0.114l-0.001-0.001-0.483-0.757c-0.025-0.038-0.039-0.085-0.039-0.136s0.015-0.097 0.040-0.137l-0.001 0.001 0.483-0.755c0.045-0.068 0.121-0.113 0.208-0.113 0.001 0 0.002 0 0.004 0h1.497c0.001 0 0.002-0 0.003-0 0.13 0 0.236 0.106 0.236 0.236 0 0.004-0 0.007-0 0.011l0-0.001v1.516z"></path>
+        <path d="M28.025 6.283c-0.828-1.335-5.020-1.995-5.831-1.699-0.544 0.215-1.003 0.44-1.44 0.698l0.047-0.026c-1.303 0.815-2.887 1.299-4.583 1.299-0.054 0-0.108-0-0.162-0.001l0.008 0c-0.045 0.001-0.099 0.001-0.152 0.001-1.696 0-3.28-0.483-4.62-1.32l0.037 0.021c-0.39-0.232-0.849-0.457-1.325-0.648l-0.068-0.024c-0.815-0.296-5.005 0.363-5.833 1.699-3.381 5.449-5.31 17.909-3.128 20.202 0.396 0.444 0.971 0.723 1.61 0.723 0.075 0 0.15-0.004 0.223-0.011l-0.009 0.001c1.189-0.116 2.464-1.152 3.595-2.927l0.312-0.517c2.008-3.339 2.172-3.612 9.359-3.612s7.351 0.273 9.359 3.612l0.314 0.522c1.127 1.768 2.403 2.806 3.592 2.922 0.063 0.007 0.137 0.010 0.211 0.010 0.64 0 1.215-0.278 1.611-0.72l0.002-0.002c2.183-2.292 0.252-14.752-3.128-20.202zM22.843 7.059h1.509c0.139 0.002 0.25 0.114 0.25 0.253 0 0 0 0.001 0 0.001v-0 1.504c0 0 0 0 0 0 0 0.089-0.046 0.167-0.115 0.212l-0.001 0.001-0.755 0.485c-0.038 0.025-0.085 0.040-0.135 0.040s-0.097-0.015-0.136-0.040l0.001 0.001-0.763-0.485c-0.072-0.045-0.12-0.122-0.123-0.211v-1.504c0.008-0.142 0.124-0.254 0.267-0.255h0zM18.231 9.971c0.093-0.088 0.218-0.142 0.356-0.142s0.263 0.054 0.356 0.142l-0-0c0.092 0.091 0.148 0.217 0.148 0.356 0 0.277-0.225 0.502-0.502 0.502-0.001 0-0.001 0-0.002 0h0c-0.277-0.002-0.501-0.227-0.501-0.504 0-0.138 0.056-0.263 0.146-0.354l-0 0zM13.207 9.971c0.092-0.088 0.217-0.142 0.354-0.142s0.262 0.054 0.355 0.142l-0-0c0.091 0.091 0.148 0.216 0.148 0.355v0c0 0.001 0 0.002 0 0.003 0 0.276-0.224 0.5-0.5 0.5-0.139 0-0.265-0.057-0.356-0.149l-0-0c-0.090-0.091-0.145-0.215-0.145-0.353 0-0.001 0-0.001 0-0.002v0c0-0 0-0.001 0-0.001 0-0.138 0.055-0.263 0.144-0.354l-0 0zM7.809 12.339c-0.002 0-0.005 0-0.008 0-1.111 0-2.012-0.901-2.012-2.012s0.901-2.012 2.012-2.012c1.111 0 2.012 0.901 2.012 2.012 0 0 0 0 0 0v-0c0 0 0 0 0 0 0 1.108-0.897 2.007-2.005 2.010h-0zM15.063 15.859c0 0.003 0 0.008 0 0.012 0 0.133-0.107 0.242-0.240 0.244h-1.515v1.524c0 0.005 0.001 0.011 0.001 0.017 0 0.121-0.098 0.219-0.219 0.219-0.003 0-0.006-0-0.009-0h-1.515c-0.004 0-0.009 0-0.014 0-0.133 0-0.242-0.105-0.248-0.236l-0-0.001v-1.526h-1.491c-0.142-0.001-0.258-0.114-0.262-0.256v-1.512c0.006-0.137 0.118-0.245 0.256-0.245 0.002 0 0.005 0 0.007 0h1.491v-1.512c0.005-0.138 0.119-0.249 0.258-0.249 0.001 0 0.002 0 0.004 0h1.515c0.126 0.001 0.228 0.103 0.228 0.229 0 0.007-0 0.013-0.001 0.020l0-0.001v1.512h1.514c0.001-0 0.002-0 0.004-0 0.13 0 0.236 0.106 0.236 0.236 0 0.003-0 0.006-0 0.009v-0 1.513zM16.064 11.592c-0.001 0-0.003 0-0.005 0-0.699 0-1.266-0.567-1.266-1.266s0.567-1.266 1.266-1.266c0.699 0 1.266 0.567 1.266 1.266v0c0 0 0 0 0 0.001 0 0.697-0.564 1.263-1.261 1.265h-0zM19.805 17.152c-0.002 0-0.005 0-0.008 0-1.111 0-2.012-0.901-2.012-2.012s0.901-2.012 2.012-2.012c1.111 0 2.012 0.901 2.012 2.012v0c0 0 0 0.001 0 0.002 0 1.108-0.896 2.007-2.003 2.010h-0zM22.097 11.336h-1.498c-0.001 0-0.003 0-0.004 0-0.143 0-0.26-0.109-0.273-0.249l-0-0.001v-1.518c0.013-0.139 0.128-0.246 0.269-0.246 0.003 0 0.005 0 0.008 0h1.497c0.001 0 0.002-0 0.003-0 0.087 0 0.163 0.045 0.208 0.112l0.001 0.001 0.483 0.756c0.025 0.038 0.040 0.085 0.040 0.136s-0.015 0.097-0.041 0.136l0.001-0.001-0.483 0.757c-0.045 0.070-0.123 0.115-0.211 0.115-0 0-0 0-0 0h0zM24.352 13.598h-1.509c-0.144-0.004-0.26-0.118-0.267-0.261l-0-0.001v-1.504c0.003-0.089 0.051-0.167 0.122-0.211l0.001-0.001 0.759-0.485c0.038-0.025 0.085-0.039 0.136-0.039s0.097 0.015 0.137 0.040l-0.001-0.001 0.745 0.485c0.064 0.044 0.105 0.117 0.105 0.2 0 0.004-0 0.008-0 0.012l0-0.001v1.504c0.001 0.006 0.001 0.013 0.001 0.020 0 0.129-0.101 0.234-0.228 0.241l-0.001 0zM26.834 11.084c0 0.003 0 0.007 0 0.011 0 0.132-0.107 0.239-0.239 0.240h-1.498c-0 0-0.001 0-0.001 0-0.088 0-0.165-0.045-0.210-0.114l-0.001-0.001-0.483-0.757c-0.025-0.038-0.039-0.085-0.039-0.136s0.015-0.097 0.040-0.137l-0.001 0.001 0.483-0.755c0.045-0.068 0.121-0.113 0.208-0.113 0.001 0 0.002 0 0.004 0h1.497c0.001 0 0.002-0 0.003-0 0.13 0 0.236 0.106 0.236 0.236 0 0.004-0 0.007-0 0.011l0-0.001v1.516z"></path>
     </svg></div>
   </div>
   <!-- Maçlar İçeriği -->
-
-<script>
-document.getElementById('searchInput').addEventListener('keyup', function() {
-    let filter = this.value.toLowerCase();
-    let matches = document.querySelectorAll('.single-match');
-
-    matches.forEach(function(match) {
-        let text = match.textContent.toLowerCase();
-        if (text.includes(filter)) {
-            match.style.display = 'flex';
-        } else {
-            match.style.display = 'none';
-        }
-    });
-});
-</script>
 
   <div id="matches-content" style="flex-grow: 1;"></div>
 </div>
@@ -612,8 +625,7 @@ document.getElementById('searchInput').addEventListener('keyup', function() {
 <style>
 .vertical-menu {
     background: rgba(35, 41, 47, .2);
-    display: flex
-;
+    display: flex;
     flex-direction: column;
     align-items: center;
     padding: 10px 5px;
@@ -669,7 +681,7 @@ document.getElementById('searchInput').addEventListener('keyup', function() {
           this.classList.add('active');
 
           const category = this.getAttribute('data-matchfilter');
-          filterMatches(category);  // Artık virgüllü değer destekliyor
+          filterMatches(category);
         });
       });
 
@@ -678,11 +690,6 @@ document.getElementById('searchInput').addEventListener('keyup', function() {
     })
     .catch(error => console.error('Veri yüklenirken hata:', error));
 </script>
-
-
-
-
-
 
                     </div>
 
@@ -743,8 +750,8 @@ ${
     ? `<div class="reklam-3" style="max-width:100%;height:100%;margin:0 auto;">
          ${
            hrefreklam2
-             ? `<a href="${hrefreklam2}" target="_blank"><center><img src="${reklam2}" alt="reklamlar" /></center></a>`
-             : `<center><img src="${reklam2}" alt="reklamlar" /></center>`
+             ? `<a href="${hrefreklam2}" target="_blank"><center><img src="${reklam2}" alt="reklamlar" loading="lazy" /></center></a>`
+             : `<center><img src="${reklam2}" alt="reklamlar" loading="lazy" /></center>`
          }
        </div>`
     : ''
@@ -755,8 +762,8 @@ ${
     ? `<div class="reklam-5" style="max-width:100%;height:100%;margin:0 auto;">
          ${
            hrefreklam5
-             ? `<a href="${hrefreklam5}" target="_blank"><center><img src="${reklam5}" alt="reklamlar" /></center></a>`
-             : `<center><img src="${reklam5}" alt="reklamlar" /></center>`
+             ? `<a href="${hrefreklam5}" target="_blank"><center><img src="${reklam5}" alt="reklamlar" loading="lazy" /></center></a>`
+             : `<center><img src="${reklam5}" alt="reklamlar" loading="lazy" /></center>`
          }
        </div></div>`
     : ''
@@ -770,7 +777,7 @@ ${
   </div>${
   canlisonuc == 0
     ? `<div style="position: relative; width: 100%; height: 150px;">
-         <iframe src="https://www.sporx.com/_iframe/mac-merkezi/scoreboard.php" width="100%" height="100%" frameborder="0"></iframe>
+         <iframe src="https://www.sporx.com/_iframe/mac-merkezi/scoreboard.php" width="100%" height="100%" frameborder="0" loading="lazy"></iframe>
          <div style="position: absolute; top: 0; left: 0; 
                      width: 100%; height: 100%; 
                      background: transparent; 
@@ -781,7 +788,7 @@ ${
 
 
   </div>
-  <center><img class="" src="${logo}" width="${logowidth}" alt="Canlı maç yayınları" /></center>
+  <center><img class="" src="${logo}" width="${logowidth}" alt="Canlı maç yayınları" loading="lazy" /></center>
   <div class="copyright-text">
     <p>${footermetin}</p>
   </div>
@@ -812,9 +819,9 @@ ${
            ${
              hrefreklam6
                ? `<a href="${hrefreklam6}" target="_blank" style="display:block;">
-                    <img src="${reklam6}" style="max-width:100%; height:auto; display:block; border-radius:6px;" />
+                    <img src="${reklam6}" style="max-width:100%; height:auto; display:block; border-radius:6px;" loading="lazy" />
                   </a>`
-               : `<img src="${reklam6}" style="max-width:100%; height:auto; display:block; border-radius:6px;" />`
+               : `<img src="${reklam6}" style="max-width:100%; height:auto; display:block; border-radius:6px;" loading="lazy" />`
            }
          </div>
        </div>`
@@ -824,10 +831,19 @@ ${
 </div>
 </body>
 </html>
+`;
 
- `;
-
-  return new Response(html, {
-    headers: { "Content-Type": "text/html; charset=UTF-8" }
+  // Response oluştur ve cache ekle
+  const response = new Response(html, {
+    headers: { 
+      "Content-Type": "text/html; charset=UTF-8",
+      "Cache-Control": "public, s-maxage=300, max-age=60", // Edge 5dk, Browser 1dk
+      "CDN-Cache-Control": "max-age=300"
+    }
   });
+  
+  // Asenkron olarak cache'e kaydet
+  context.waitUntil(cache.put(cacheKey, response.clone()));
+  
+  return response;
 }
